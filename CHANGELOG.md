@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.8.0](https://github.com/Zooz/predator-runner/compare/v1.6.2...v1.8.0) (2026-07-28)
+
+
+### Features
+
+* node 24, fetch-based reporting, security overrides and GitHub Actions ([#1](https://github.com/Zooz/predator-runner/issues/1)) ([20214f0](https://github.com/Zooz/predator-runner/commit/20214f0f69793b897520219b2084b515fccd5f44))
+
 ### [1.6.2](https://github.com/Zooz/predator-runner/compare/v1.6.1...v1.6.2) (2023-04-02)
 
 
