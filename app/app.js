@@ -1,7 +1,7 @@
 'use strict';
 require('./utils/verifier').verifyEnvironmentVars();
 
-const uuid = require('uuid/v4');
+const { v4: uuid } = require('uuid');
 const semver = require('semver');
 
 const runner = require('./models/runner'),

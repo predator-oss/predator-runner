@@ -1,6 +1,6 @@
 const should = require('should'),
     sinon = require('sinon'),
-    uuid = require('uuid');
+    { v4: uuid } = require('uuid');
 
 const request = require('../../../app/helpers/requestSender'),
     reporterConnector = require('../../../app/connectors/reporterConnector');
@@ -21,8 +21,8 @@ describe('Post stats to reporter', () => {
         duration: 5,
         arrival_rate: 5,
         predatorUrl: 'http://localhost/v1',
-        reportId: uuid.v4(),
-        containerIdL: uuid.v4()
+        reportId: uuid(),
+        containerIdL: uuid()
     };
 
     before(() => {

@@ -1,6 +1,6 @@
 let should = require('should');
 let sinon = require('sinon');
-let uuid = require('uuid/v4');
+let { v4: uuid } = require('uuid');
 var EventEmitter = require('events').EventEmitter;
 let artillery = require('artillery/core');
 let consts = require('../../utils/consts');

@@ -1,6 +1,6 @@
 const should = require('should'),
     sinon = require('sinon'),
-    uuid = require('uuid');
+    { v4: uuid } = require('uuid');
 
 const request = require('../../../app/helpers/requestSender'),
     fileDownloadConnector = require('../../../app/connectors/fileDownloadConnector');

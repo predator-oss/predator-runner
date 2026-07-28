@@ -1,6 +1,6 @@
 let should = require('should');
 let sinon = require('sinon');
-let uuid = require('uuid');
+let { v4: uuid } = require('uuid');
 let logger = require('../../../app/utils/logger');
 let errorHandler = require('../../../app/handler/errorHandler');
 let reporterConnector = require('../../../app/connectors/reporterConnector');

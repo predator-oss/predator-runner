@@ -1,23 +1,18 @@
-# NODE container which runs this service
-FROM node:14-alpine
+# The load generator: artillery driven by app/app.js, reporting stats back to
+# predator. node:24-alpine publishes linux/amd64 and linux/arm64.
+FROM node:24-alpine
 
 RUN mkdir -p /usr/app
 WORKDIR /usr
-# Install app dependencies
-COPY package.json /usr/
-COPY package-lock.json /usr/
 
-RUN apk update && \
-    # Install git
-    apk add --no-cache bash git openssh && \
-#    # Install node-gyp dependencies
-    apk add --no-cache make gcc g++ python3 && \
-#    # npm install
-    npm install --production
+COPY package.json package-lock.json /usr/
 
-## Bundle app source
+# git: artillery and two plugins are installed from git URLs.
+RUN apk add --no-cache bash git openssh && \
+    npm ci --omit=dev --omit=optional
+
 COPY /app /usr/app
 
 EXPOSE 8080
 
-CMD [ "node","--max_old_space_size=192","./app/app.js" ]
+CMD [ "node", "--max_old_space_size=192", "./app/app.js" ]
