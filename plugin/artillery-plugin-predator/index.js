@@ -77,7 +77,7 @@ function Plugin(script, events) {
     // Consumer-group lag: polled here, once per test, leader-side.
     let lagMonitor = null;
     const kafkaCfg = script && script.config && script.config.kafka;
-    if (kafkaCfg && kafkaCfg.lagMonitor && kafkaCfg.lagMonitor.consumerGroup) {
+    if (kafkaCfg && kafkaCfg.lagMonitor && (kafkaCfg.lagMonitor.consumerGroup || (kafkaCfg.lagMonitor.consumerGroups || []).length)) {
         const { LagMonitor } = require('./lagMonitor');
         lagMonitor = new LagMonitor(kafkaCfg);
         lagMonitor.start();

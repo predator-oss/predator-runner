@@ -56,11 +56,11 @@ describe('Kafka engine with real artillery and a real broker', function () {
             artillery_test: {
                 config: {
                     target: `kafka://${BROKERS.join(',')}`,
-                    phases: [{ duration: 5, arrivalRate: 4 }],
+                    phases: [{ duration: 12, arrivalRate: 3 }],
                     engines: { kafka: {} },
                     kafka: {
                         brokers: BROKERS,
-                        lagMonitor: { consumerGroup: 'lagging-group', intervalMs: 1500 }
+                        lagMonitor: { consumerGroups: ['lagging-group', 'second-group'], intervalMs: 500 }
                     },
                     variables: { region: ['eu', 'us'] }
                 },
@@ -81,7 +81,7 @@ describe('Kafka engine with real artillery and a real broker', function () {
         await runner.runTest({
             jobId: 'job-id', testId: 'kafka-test', reportId: 'report-id',
             containerId: 'kafka-runner-test', jobType: 'load_test',
-            environment: 'test', duration: 5, arrivalRate: 4,
+            environment: 'test', duration: 12, arrivalRate: 3,
             httpPoolSize: 10, statsInterval: 30,
             predatorUrl: `http://127.0.0.1:${predator.address().port}/v1`
         });
@@ -94,7 +94,8 @@ describe('Kafka engine with real artillery and a real broker', function () {
         const blob = JSON.stringify(intermediates);
         blob.should.containEql('kafka.messages_sent');
         blob.should.containEql('kafka.publish_latency');
-        blob.should.containEql('kafka.consumer_lag_total');
+        blob.should.containEql('kafka.consumer_lag_total.lagging-group');
+        blob.should.containEql('kafka.consumer_lag_total.second-group');
 
         // Consume everything back and verify the payloads are real and templated.
         const kafka = new Kafka({ clientId: 'engine-test-verifier', brokers: BROKERS });
