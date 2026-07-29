@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.8.2](https://github.com/Zooz/predator-runner/compare/v1.8.0...v1.8.2) (2026-07-29)
+
+
+### Bug Fixes
+
+* parse responses by content type — unconditional JSON.parse broke csv downloads ([#3](https://github.com/Zooz/predator-runner/issues/3)) ([9148b37](https://github.com/Zooz/predator-runner/commit/9148b3788f6f1d026f415a04f2248b4f8e38d796))
+
 ## [1.8.0](https://github.com/Zooz/predator-runner/compare/v1.6.2...v1.8.0) (2026-07-28)
 
 
