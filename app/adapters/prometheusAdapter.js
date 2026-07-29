@@ -1,20 +1,21 @@
+// Maps predator's prometheus metrics config onto artillery v2's bundled
+// publish-metrics plugin (pushgateway reporter).
 module.exports.buildMetricsPlugin = (metricsConfig, jobConfig) => {
     const labels = Object.assign({
-        'testName': jobConfig.testName,
-        'testRunId': jobConfig.reportId,
-        'cluster': jobConfig.cluster
-
+        testName: jobConfig.testName,
+        testRunId: jobConfig.reportId,
+        cluster: jobConfig.cluster
     }, metricsConfig.labels);
-    let prometheusPlugin = {
-        'prometheus': {
-            'pushGatewayUrl': metricsConfig.push_gateway_url,
-            labels
-        }
+
+    const tags = Object.entries(labels)
+        .filter(([, value]) => value !== undefined && value !== null)
+        .map(([name, value]) => `${name}:${value}`);
+
+    return {
+        'publish-metrics': [{
+            type: 'prometheus',
+            pushgateway: metricsConfig.push_gateway_url,
+            tags
+        }]
     };
-
-    if (metricsConfig.buckets_sizes) {
-        prometheusPlugin.prometheus.bucketSizes = metricsConfig.buckets_sizes;
-    }
-
-    return prometheusPlugin;
 };

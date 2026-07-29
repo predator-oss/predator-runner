@@ -30,7 +30,12 @@ module.exports.sendRequest = async (options) => {
         const text = await response.text();
         if (response.ok) {
             logger.info(`Request to ${options.url} succeeded with status code ${response.status}`);
-            return text ? JSON.parse(text) : undefined;
+            // CSV payload downloads are text/plain — only parse JSON responses.
+            const contentType = response.headers.get('content-type') || '';
+            if (!text) {
+                return undefined;
+            }
+            return contentType.includes('json') ? JSON.parse(text) : text;
         }
 
         lastError = new Error(`${response.status} - ${text}`);

@@ -1,19 +1,7 @@
-module.exports.buildMetricsPlugin = (metricsConfig, jobConfig) => {
-    return {
-        'influxdb': {
-            'testName': jobConfig.testName,
-            'measurementName': 'artillery_latencies',
-            'errorMeasurementName': 'artillery_client_errors',
-            'testRunId': jobConfig.reportId,
-            'tags': {
-                'environment': jobConfig.cluster
-            },
-            'influx': {
-                'host': metricsConfig.host,
-                'username': metricsConfig.username,
-                'password': metricsConfig.password,
-                'database': metricsConfig.database
-            }
-        }
-    };
+// artillery v2's publish-metrics plugin has no influx reporter; the old
+// artillery 1.x influxdb plugin is incompatible with the v2 plugin API.
+// ponytail: fails loudly rather than silently dropping metrics — revisit if
+// influx export is still needed (openreport/OTLP are candidates).
+module.exports.buildMetricsPlugin = () => {
+    throw new Error('Influx metrics export is not supported with artillery v2 yet. Use the prometheus exporter, or open an issue at predator-oss/predator-runner.');
 };

@@ -32,7 +32,7 @@ let config = {
     metricsPluginName: process.env.METRICS_PLUGIN_NAME,
     metricsExportConfig: process.env.METRICS_EXPORT_CONFIG,
     proxyUrl: process.env.PROXY_URL,
-    delayRunnerMs: parseInt(process.env.DELAY_RUNNER_MS),
+    delayRunnerMs: parseInt(process.env.DELAY_RUNNER_MS) || 0,
     reportId: process.env.REPORT_ID,
     predatorVersion: process.env.PREDATOR_VERSION
 };
