@@ -50,6 +50,14 @@ describe('Kafka engine with real artillery and a real broker', function () {
     });
 
     it('produces templated messages, reports engine metrics and consumer lag', async () => {
+        // Per-partition lag only exists for groups with committed offsets —
+        // pin lagging-group to offset 0 so every produced message counts as lag.
+        const admin = new Kafka({ clientId: 'engine-test-admin', brokers: BROKERS }).admin();
+        await admin.connect();
+        await admin.createTopics({ topics: [{ topic: TOPIC }] }).catch(() => {});
+        await admin.setOffsets({ groupId: 'lagging-group', topic: TOPIC, partitions: [{ partition: 0, offset: '0' }] }).catch(() => {});
+        await admin.disconnect();
+
         currentTest = {
             id: 'kafka-test',
             name: 'kafka produce test',
@@ -96,6 +104,7 @@ describe('Kafka engine with real artillery and a real broker', function () {
         blob.should.containEql('kafka.publish_latency');
         blob.should.containEql('kafka.consumer_lag_total.lagging-group');
         blob.should.containEql('kafka.consumer_lag_total.second-group');
+        blob.should.containEql(`kafka.consumer_lag_partition.lagging-group.${TOPIC}.0`);
 
         // Consume everything back and verify the payloads are real and templated.
         const kafka = new Kafka({ clientId: 'engine-test-verifier', brokers: BROKERS });
@@ -118,5 +127,57 @@ describe('Kafka engine with real artillery and a real broker', function () {
         const mine = messages.filter(m => m.source === 'engine-test');
         mine.length.should.be.aboveOrEqual(15, `expected ~20 produced messages, consumed ${mine.length}`);
         new Set(mine.map(m => m.region)).size.should.be.aboveOrEqual(2, 'variable templating should produce both regions');
+    });
+
+    it('runs a mixed script: http scenario and kafka scenario side by side', async () => {
+        let httpHits = 0;
+        const api = await startServer((req, res) => {
+            httpHits++;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end('{"ok":true}');
+        });
+
+        currentTest = {
+            id: 'mixed-test',
+            name: 'mixed http+kafka',
+            artillery_test: {
+                config: {
+                    target: `http://127.0.0.1:${api.address().port}`,
+                    phases: [{ duration: 10, arrivalRate: 4 }],
+                    engines: { kafka: {} },
+                    kafka: {
+                        brokers: BROKERS,
+                        lagMonitor: { consumerGroups: ['lagging-group'], intervalMs: 500 }
+                    }
+                },
+                scenarios: [
+                    { name: 'http flow', weight: 1, flow: [{ get: { url: '/health' } }] },
+                    {
+                        name: 'kafka flow',
+                        weight: 1,
+                        engine: 'kafka',
+                        flow: [{ produce: { topic: TOPIC, key: 'mix', message: '{"source": "mixed-test"}' } }]
+                    }
+                ]
+            }
+        };
+
+        try {
+            await runner.runTest({
+                jobId: 'job-id', testId: 'mixed-test', reportId: 'report-id',
+                containerId: 'mixed-runner-test', jobType: 'load_test',
+                environment: 'test', duration: 10, arrivalRate: 4,
+                httpPoolSize: 10, statsInterval: 30,
+                predatorUrl: `http://127.0.0.1:${predator.address().port}/v1`
+            });
+        } finally {
+            api.close();
+        }
+
+        statsPosts.map(p => p.phase_status).should.containEql('done');
+        const blob = JSON.stringify(statsPosts);
+        httpHits.should.be.above(0, 'http scenario should have hit the api');
+        blob.should.containEql('kafka.messages_sent');
+        blob.should.containEql('kafka.consumer_lag_total.lagging-group');
     });
 });

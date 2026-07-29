@@ -41,9 +41,9 @@ class LagMonitor {
             sasl: kafkaConfig.sasl,
             logLevel: logLevel.NOTHING
         });
-        // Per-group sample buffers: { group: { totals: [], maxes: [] } }
+        // Per-group sample buffers: { group: { totals: [], maxes: [], partitions: { 'topic.0': [] } } }
         this.samples = {};
-        this.groups.forEach((g) => { this.samples[g] = { totals: [], maxes: [] }; });
+        this.groups.forEach((g) => { this.samples[g] = { totals: [], maxes: [], partitions: {} }; });
         this.errors = 0;
     }
 
@@ -55,6 +55,7 @@ class LagMonitor {
             const offsets = await this.admin.fetchOffsets({ groupId: group });
             let total = 0;
             let maxPartition = 0;
+            const perPartition = [];
             for (const topicOffsets of offsets) {
                 const latest = await this.admin.fetchTopicOffsets(topicOffsets.topic);
                 for (const p of topicOffsets.partitions) {
@@ -64,11 +65,17 @@ class LagMonitor {
                     const lag = Math.max(0, Number(head.offset) - committed);
                     total += lag;
                     maxPartition = Math.max(maxPartition, lag);
+                    perPartition.push({ topic: topicOffsets.topic, partition: p.partition, lag });
                 }
             }
-            this.samples[group].totals.push(total);
-            this.samples[group].maxes.push(maxPartition);
-            this.pushToPrometheus(group, total, maxPartition);
+            const buf = this.samples[group];
+            buf.totals.push(total);
+            buf.maxes.push(maxPartition);
+            for (const pp of perPartition) {
+                const key = `${pp.topic}.${pp.partition}`;
+                (buf.partitions[key] = buf.partitions[key] || []).push(pp.lag);
+            }
+            this.pushToPrometheus(group, total, maxPartition, perPartition);
         };
 
         const poll = async () => {
@@ -89,7 +96,7 @@ class LagMonitor {
     }
 
     // Grafana path: per-group gauges, group as a label.
-    pushToPrometheus (group, total, maxPartition) {
+    pushToPrometheus (group, total, maxPartition, perPartition = []) {
         if (process.env.METRICS_PLUGIN_NAME !== 'prometheus' || !process.env.METRICS_EXPORT_CONFIG) return;
         try {
             const cfg = JSON.parse(Buffer.from(process.env.METRICS_EXPORT_CONFIG, 'base64').toString('ascii'));
@@ -97,7 +104,8 @@ class LagMonitor {
             const runId = process.env.REPORT_ID || 'unknown';
             const base = cfg.push_gateway_url.replace(/\/$/, '');
             const body = 'kafka_consumer_lag_total ' + total + '\n' +
-                         'kafka_consumer_lag_max_partition ' + maxPartition + '\n';
+                         'kafka_consumer_lag_max_partition ' + maxPartition + '\n' +
+                         perPartition.map(p => `kafka_consumer_lag_partition{topic="${p.topic}",partition="${p.partition}"} ${p.lag}`).join('\n') + (perPartition.length ? '\n' : '');
             fetch(base + '/metrics/job/predator_kafka_lag/test_run_id/' + encodeURIComponent(runId) + '/consumer_group/' + encodeURIComponent(group), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'text/plain' },
@@ -115,8 +123,13 @@ class LagMonitor {
             const maxes = summarize(buf.maxes);
             if (totals) out[`kafka.consumer_lag_total.${group}`] = totals;
             if (maxes) out[`kafka.consumer_lag_max_partition.${group}`] = maxes;
+            for (const [pKey, lags] of Object.entries(buf.partitions)) {
+                const s = summarize(lags);
+                if (s) out[`kafka.consumer_lag_partition.${group}.${pKey}`] = s;
+            }
             buf.totals = [];
             buf.maxes = [];
+            buf.partitions = {};
         }
         return out;
     }
