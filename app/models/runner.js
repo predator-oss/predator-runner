@@ -151,7 +151,7 @@ function injectMetricsPlugins(testFile, jobConfig) {
 async function getProcessorJavascript(jobConfig, test) {
     let javascript;
     if (test['file_id']) {
-        logger.warn('DEPRECATED: Using file_id in tests is deprecated and will soon be no longer supported. Please use the Processors API in order to use custom javascript in your tests.\n Link to API documentation: https://zooz.github.io/predator/indexapiref.html#tag/Processors');
+        logger.warn('DEPRECATED: Using file_id in tests is deprecated and will soon be no longer supported. Please use the Processors API in order to use custom javascript in your tests.\n Link to API documentation: https://predator-oss.github.io/predator/indexapiref.html#tag/Processors');
         const fileContentBase64 = await fileDownloadConnector.getFile(jobConfig, test['file_id']);
         javascript = Buffer.from(fileContentBase64, 'base64').toString('utf8');
     } else if (test['processor_id']) {

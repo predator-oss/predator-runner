@@ -18,7 +18,7 @@ const downloadFileResource = async (url, method, reportId) => {
         method,
         url,
         headers: {
-            'x-zooz-request-id': `runner_${reportId}`
+            'x-predator-request-id': `runner_${reportId}`
         }
     };
 
