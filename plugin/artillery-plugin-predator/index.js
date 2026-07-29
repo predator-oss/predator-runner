@@ -53,8 +53,12 @@ async function postStats(body) {
 }
 
 function Plugin(script, events) {
-    // Workers get the plugin loaded too; only the leader sees aggregated
-    // stats/done, but phaseStarted fires in workers as well — dedupe there.
+    // Artillery loads every plugin in the leader AND once per worker. Reporting
+    // must happen exactly once, from the leader's aggregated events — the same
+    // guard publish-metrics-style reporters use, inverted from expect's.
+    if (typeof process.env.LOCAL_WORKER_ID !== 'undefined') {
+        return this;
+    }
     let firstIntermediate = true;
     const pending = [];
 

@@ -45,6 +45,10 @@ module.exports.runTest = async (jobConfig) => {
         const child = spawn(process.execPath, [artilleryBin, 'run', scriptPath], {
             stdio: ['ignore', 'inherit', 'inherit'],
             env: Object.assign({}, process.env, {
+                // Processors historically could require() modules bundled with
+                // the runner (the v1 engine compiled them with our module
+                // paths); NODE_PATH restores that resolution for the v2 child.
+                NODE_PATH: path.join(__dirname, '..', '..', 'node_modules'),
                 PREDATOR_URL: jobConfig.predatorUrl,
                 TEST_ID: jobConfig.testId,
                 REPORT_ID: jobConfig.reportId,

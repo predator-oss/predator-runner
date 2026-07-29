@@ -172,6 +172,40 @@ describe('Run test with real artillery v2', function () {
         targetRequests.length.should.eql(5);
     });
 
+    it('does not double-report with multiple workers', async () => {
+        process.env.WORKERS = '2';
+        try {
+            await runWith();
+        } finally {
+            delete process.env.WORKERS;
+        }
+
+        phaseStatuses().filter(p => p === 'done').length.should.eql(1, 'done must post exactly once');
+        const reported = statsPosts
+            .filter(p => p.phase_status === 'first_intermediate' || p.phase_status === 'intermediate')
+            .reduce((sum, p) => sum + JSON.parse(p.data).requestsCompleted, 0);
+        reported.should.eql(targetRequests.length, 'reported requests must equal actual requests');
+    });
+
+    it('processors can require modules bundled with the runner', async () => {
+        currentTest.processor_id = 'processor-with-require';
+        currentTest.__processor = [
+            "const { v4: uuid } = require('uuid');",
+            'module.exports.tagRequest = function (requestParams, context, ee, next) {',
+            "  requestParams.headers = requestParams.headers || {};",
+            "  requestParams.headers['x-request-id'] = uuid();",
+            '  return next();',
+            '};'
+        ].join('\n');
+        currentTest.artillery_test.scenarios[0].flow[0].post.beforeRequest = 'tagRequest';
+
+        await runWith();
+
+        phaseStatuses().should.containEql('done');
+        targetRequests.length.should.be.above(0);
+        targetRequests.every(r => /^[0-9a-f-]{36}$/.test(r.headers['x-request-id'])).should.eql(true);
+    });
+
     it('rejects when the test file cannot be fetched', async () => {
         currentTest = null; // GET /tests/:id returns empty -> connector fails
         await runWith().should.be.rejected();
