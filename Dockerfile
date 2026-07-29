@@ -7,8 +7,11 @@ WORKDIR /usr
 
 COPY package.json package-lock.json /usr/
 
-# git: artillery and two plugins are installed from git URLs.
-RUN apk add --no-cache bash git openssh && \
+# Predator never uses artillery's Playwright engine — skip the Chromium
+# download its postinstall attempts (unsupported on alpine/arm64 anyway).
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+RUN apk add --no-cache bash && \
     npm ci --omit=dev --omit=optional
 
 COPY /app /usr/app

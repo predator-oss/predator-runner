@@ -128,8 +128,10 @@ const updateTestParameters = (jobConfig, testFile, processorJavascript, csvData,
 };
 
 function injectMetricsPlugins(testFile, jobConfig) {
-    // Both adapters now target artillery's official publish-metrics plugin.
     const metricsPluginName = jobConfig.metricsPluginName.toLowerCase();
+    if (metricsPluginName !== 'prometheus') {
+        throw new Error(`Metrics plugin '${metricsPluginName}' is not supported; only prometheus export is available with artillery v2.`);
+    }
     const metricsAdapter = require(`../adapters/${metricsPluginName}Adapter`);
     const asciiMetricsExportConfig = (Buffer.from(jobConfig.metricsExportConfig, 'base64').toString('ascii'));
     const parsedMetricsConfig = JSON.parse(asciiMetricsExportConfig);

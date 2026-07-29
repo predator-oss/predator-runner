@@ -16,7 +16,6 @@ const FUNCTIONAL_TEST_MANDATORY_VARIABLES = [
 ];
 
 const PLUGINS_MANDATORY_VARIABLES = {
-    influx: ['host', 'database', 'username', 'password'],
     prometheus: ['push_gateway_url']
 };
 
