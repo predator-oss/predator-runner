@@ -12,7 +12,11 @@ COPY package.json package-lock.json /usr/
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 RUN apk add --no-cache bash && \
-    npm ci --omit=dev --omit=optional
+    npm ci --omit=dev --omit=optional && \
+    # artillery v2's tree ships TypeScript sources, source maps and test dirs —
+    # hundreds of MB that the runner never reads.
+    find node_modules \( -name '*.ts' -o -name '*.js.map' -o -name '*.md' \) -type f -delete && \
+    npm cache clean --force
 
 COPY /app /usr/app
 
