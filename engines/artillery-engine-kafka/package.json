@@ -1,0 +1,10 @@
+{
+  "name": "artillery-engine-kafka",
+  "version": "1.0.0",
+  "description": "Kafka produce-load engine for artillery v2, with consumer-group lag monitoring",
+  "main": "index.js",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "kafkajs": "^2.2.4"
+  }
+}

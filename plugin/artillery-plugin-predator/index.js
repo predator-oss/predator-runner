@@ -62,6 +62,27 @@ function Plugin(script, events) {
     let firstIntermediate = true;
     const pending = [];
 
+    // Plugins receive a stripped { report } wrapper; the global bus (what the
+    // console reporter uses) carries the native counters/summaries where
+    // engine-custom metrics (kafka.*) live. Native objects are stashed here
+    // and merged into the legacy-shaped report the plugin events provide.
+    const bus = (global.artillery && global.artillery.globalEvents) || events;
+    let latestNative = null;
+    bus.on('stats', (native) => {
+        if (native && typeof native.report !== 'function') {
+            latestNative = native;
+        }
+    });
+
+    // Consumer-group lag: polled here, once per test, leader-side.
+    let lagMonitor = null;
+    const kafkaCfg = script && script.config && script.config.kafka;
+    if (kafkaCfg && kafkaCfg.lagMonitor && kafkaCfg.lagMonitor.consumerGroup) {
+        const { LagMonitor } = require('./lagMonitor');
+        lagMonitor = new LagMonitor(kafkaCfg);
+        lagMonitor.start();
+    }
+
     events.on('phaseStarted', (info) => {
         pending.push(postStats({
             phase_index: info.index ? info.index.toString() : '0',
@@ -74,6 +95,16 @@ function Plugin(script, events) {
     events.on('stats', (stats) => {
         const report = typeof stats.report === 'function' ? stats.report() : stats;
         delete report.latencies;
+        // The legacy report() drops engine-custom metrics (kafka.*, etc.);
+        // merge the native counters/summaries captured from the global bus.
+        if (latestNative) {
+            report.counters = Object.assign({}, latestNative.counters, report.counters);
+            report.summaries = Object.assign({}, latestNative.summaries);
+            latestNative = null;
+        }
+        if (lagMonitor) {
+            Object.assign(report.summaries = report.summaries || {}, lagMonitor.drain());
+        }
         // v2's legacy shim leaves rps.mean at 0; derive it from the window.
         const now = Date.now();
         const windowSeconds = Math.max(1, (now - lastStatsAt) / 1000);
@@ -89,6 +120,9 @@ function Plugin(script, events) {
     });
 
     events.on('done', (report) => {
+        if (lagMonitor) {
+            pending.push(lagMonitor.stop());
+        }
         pending.push(postStats({
             phase_status: 'done',
             data: JSON.stringify({ message: 'Test Finished' })

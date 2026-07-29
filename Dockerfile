@@ -9,6 +9,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /usr/
 # artillery-plugin-predator is a file: dependency — it must exist before install
 # or the install leaves a dead symlink and artillery silently runs without it.
 COPY plugin /usr/plugin
+COPY engines /usr/engines
 
 # Predator never uses artillery's Playwright engine — skip the Chromium
 # download its postinstall attempts (unsupported on alpine/arm64 anyway).

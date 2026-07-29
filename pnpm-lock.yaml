@@ -25,6 +25,9 @@ importers:
       artillery:
         specifier: ^2.0.33
         version: 2.0.33(@types/node@26.1.2)(supports-color@8.1.1)
+      artillery-engine-kafka:
+        specifier: file:./engines/artillery-engine-kafka
+        version: file:engines/artillery-engine-kafka
       artillery-plugin-predator:
         specifier: file:./plugin/artillery-plugin-predator
         version: file:plugin/artillery-plugin-predator
@@ -955,6 +958,9 @@ packages:
 
   arrivals@2.1.2:
     resolution: {integrity: sha512-g3+rxhxUen2H4+PPBOz6U6pkQ4esBuQPna1rPskgK1jamBdDZeoppyB2vPUM/l0ccunwRrq4r2rKgCvc2FnrFA==}
+
+  artillery-engine-kafka@file:engines/artillery-engine-kafka:
+    resolution: {directory: engines/artillery-engine-kafka, type: directory}
 
   artillery-engine-playwright@1.30.0:
     resolution: {integrity: sha512-Anc9SJUL/969XTUjEGzYiTZMCg7C39VNpVNLCDgkvZ8DmGdDqcqgXl6yTymwzyJpJE7leo3x5t/r5ADUYLPdDw==}
@@ -2426,6 +2432,10 @@ packages:
 
   jws@4.0.1:
     resolution: {integrity: sha512-EKI/M/yqPncGUUh44xz0PxSidXFr/+r0pA70+gIYhjv+et7yxM+s29Y+VGDkovRofQem0fs7Uvf4+YmAdyRduA==}
+
+  kafkajs@2.2.4:
+    resolution: {integrity: sha512-j/YeapB1vfPT2iOIUn/vxdyKEuhuY2PxMBvf5JWux6iSaukAccrMtXEY/Lb7OvavDhOWME589bpLrEdnVHjfjA==}
+    engines: {node: '>=14.0.0'}
 
   keyv@4.5.4:
     resolution: {integrity: sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==}
@@ -5007,6 +5017,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  artillery-engine-kafka@file:engines/artillery-engine-kafka:
+    dependencies:
+      kafkajs: 2.2.4
+
   artillery-engine-playwright@1.30.0(supports-color@8.1.1):
     dependencies:
       '@playwright/browser-chromium': 1.61.0
@@ -5045,7 +5059,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  artillery-plugin-predator@file:plugin/artillery-plugin-predator: {}
+  artillery-plugin-predator@file:plugin/artillery-plugin-predator:
+    dependencies:
+      kafkajs: 2.2.4
 
   artillery-plugin-publish-metrics@2.38.0(supports-color@8.1.1):
     dependencies:
@@ -6792,6 +6808,8 @@ snapshots:
     dependencies:
       jwa: 2.0.1
       safe-buffer: 5.2.1
+
+  kafkajs@2.2.4: {}
 
   keyv@4.5.4:
     dependencies:
