@@ -77,7 +77,7 @@ function Plugin(script, events) {
     // Consumer-group lag: polled here, once per test, leader-side.
     let lagMonitor = null;
     const kafkaCfg = script && script.config && script.config.kafka;
-    if (kafkaCfg && kafkaCfg.lagMonitor && kafkaCfg.lagMonitor.consumerGroup) {
+    if (kafkaCfg && kafkaCfg.lagMonitor && (kafkaCfg.lagMonitor.consumerGroup || (kafkaCfg.lagMonitor.consumerGroups || []).length)) {
         const { LagMonitor } = require('./lagMonitor');
         lagMonitor = new LagMonitor(kafkaCfg);
         lagMonitor.start();
@@ -95,6 +95,11 @@ function Plugin(script, events) {
     events.on('stats', (stats) => {
         const report = typeof stats.report === 'function' ? stats.report() : stats;
         delete report.latencies;
+        // v2's legacy shim carries an Invalid Date timestamp, which JSON.stringify
+        // turns into null; predator buckets intermediates by it, so every chart
+        // collapses onto a single x position. Replace anything unparseable.
+        const reportTime = new Date(report.timestamp);
+        report.timestamp = isNaN(reportTime.getTime()) ? new Date().toISOString() : reportTime.toISOString();
         // The legacy report() drops engine-custom metrics (kafka.*, etc.);
         // merge the native counters/summaries captured from the global bus.
         if (latestNative) {
