@@ -9,7 +9,8 @@
     "integration-tests": "./tests/run.sh integration-tests",
     "unit-tests": "ARRIVAL_RATE=1 DURATION=1 c8 --check-coverage --lines 30 --reporter=html --reporter=text mocha ./tests/unit-tests --recursive --exit",
     "lint": "node_modules/eslint/bin/eslint.js app/**",
-    "release": "standard-version"
+    "release": "standard-version",
+    "kafka-tests": "ARRIVAL_RATE=1 DURATION=1 mocha ./tests/kafka-tests --recursive --exit --timeout 180000"
   },
   "repository": {
     "type": "git",
@@ -34,7 +35,8 @@
     "semver": "^7.3.2",
     "uuid": "^13.0.0",
     "artillery": "^2.0.33",
-    "artillery-plugin-predator": "file:./plugin/artillery-plugin-predator"
+    "artillery-plugin-predator": "file:./plugin/artillery-plugin-predator",
+    "artillery-engine-kafka": "file:./engines/artillery-engine-kafka"
   },
   "devDependencies": {
     "chai": "^4.1.2",
