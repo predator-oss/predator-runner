@@ -105,6 +105,10 @@ describe('Kafka engine with real artillery and a real broker', function () {
         blob.should.containEql('kafka.consumer_lag_total.lagging-group');
         blob.should.containEql('kafka.consumer_lag_total.second-group');
         blob.should.containEql(`kafka.consumer_lag_partition.lagging-group.${TOPIC}.0`);
+        // predator buckets intermediates by timestamp — null collapses charts
+        intermediates.forEach((p) => {
+            should.exist(JSON.parse(p.data).timestamp, 'intermediate stats must carry a timestamp');
+        });
 
         // Consume everything back and verify the payloads are real and templated.
         const kafka = new Kafka({ clientId: 'engine-test-verifier', brokers: BROKERS });
