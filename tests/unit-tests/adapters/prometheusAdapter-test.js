@@ -7,40 +7,27 @@ const jobConfig = {
     cluster: 'Dev'
 };
 
-const metricsConfig = {
-    push_gateway_url: 'url'
-};
-
-const expectedPluginConfiguartion = {
-    prometheus:
-        {
-            pushGatewayUrl: 'url',
-            labels: {
-                testName: 'MickeysTest',
-                testRunId: '0d9d772d-ce0e-4318-af18-d695561f1320',
-                cluster: 'Dev'
-            }
-        }
-};
-
 describe('Prometheus adapter test', () => {
-    it('Should retrieve prometheus plugin configuration without buckets_sizes or labels', () => {
-        const pluginConfiguration = prometheusAdapter.buildMetricsPlugin(metricsConfig, jobConfig);
-        should(pluginConfiguration).eql(expectedPluginConfiguartion);
+    it('maps predator config onto artillery v2 publish-metrics (pushgateway)', () => {
+        const pluginConfiguration = prometheusAdapter.buildMetricsPlugin({ push_gateway_url: 'url' }, jobConfig);
+        should(pluginConfiguration).eql({
+            'publish-metrics': [{
+                type: 'prometheus',
+                pushgateway: 'url',
+                tags: [
+                    'testName:MickeysTest',
+                    'testRunId:0d9d772d-ce0e-4318-af18-d695561f1320',
+                    'cluster:Dev'
+                ]
+            }]
+        });
     });
 
-    it('Should retrieve prometheus plugin configuration with buckets_sizes and labels', () => {
-        metricsConfig.buckets_sizes = [0.5, 1, 5, 10, 100];
-        metricsConfig.labels = { key1: 'value2', key2: 'value2' };
-        const pluginConfiguration = prometheusAdapter.buildMetricsPlugin(metricsConfig, jobConfig);
-        expectedPluginConfiguartion.prometheus.bucketSizes = [0.5, 1, 5, 10, 100];
-        expectedPluginConfiguartion.prometheus.labels = {
-            'cluster': 'Dev',
-            'key1': 'value2',
-            'key2': 'value2',
-            'testName': 'MickeysTest',
-            'testRunId': '0d9d772d-ce0e-4318-af18-d695561f1320'
-        };
-        should(pluginConfiguration).eql(expectedPluginConfiguartion);
+    it('merges custom labels into tags', () => {
+        const pluginConfiguration = prometheusAdapter.buildMetricsPlugin({
+            push_gateway_url: 'url',
+            labels: { key1: 'value1' }
+        }, jobConfig);
+        pluginConfiguration['publish-metrics'][0].tags.should.containEql('key1:value1');
     });
 });

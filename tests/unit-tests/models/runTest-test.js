@@ -1,467 +1,219 @@
-let should = require('should');
-let sinon = require('sinon');
-let { v4: uuid } = require('uuid');
-var EventEmitter = require('events').EventEmitter;
-let artillery = require('artillery/core');
-let consts = require('../../utils/consts');
-let logger = require('../../../app/utils/logger');
-let reporterConnector = require('../../../app/connectors/reporterConnector');
-let testFileConnector = require('../../../app/connectors/testFileConnector');
-let customJSConnector = require('../../../app/connectors/fileDownloadConnector');
-let runner = require('../../../app/models/runner');
-let metrics = require('../../../app/helpers/runnerMetrics');
-let prometheusAdapter = require('../../../app/adapters/prometheusAdapter');
-let influxdbAdapter = require('../../../app/adapters/influxAdapter');
+'use strict';
 
-let ee;
-let stats = {
-    _latencies: 'mickey_stats',
-    _requestTimestamps: '123',
-    _scenarioLatencies: 'mickey',
-    _completedRequests: 1,
-    report: () => {
-        return {
-            'timestamp': '2018-05-15T14:20:02.109Z',
-            'scenariosCreated': 96,
-            'scenariosCompleted': 92,
-            'requestsCompleted': 185,
-            'latency': {
-                'min': 167.6,
-                'max': 667.5,
-                'median': 193.8,
-                'p95': 322.4,
-                'p99': 609.6
-            },
-            'rps': {
-                'count': 189,
-                'mean': 19.15
-            },
-            'scenarioDuration': {
-                'min': 367.7,
-                'max': 1115.1,
-                'median': 385.1,
-                'p95': 780.8,
-                'p99': 1060.9
-            },
-            'scenarioCounts': {
-                'Scenario': 96
-            },
-            'errors': {},
-            'codes': {
-                '201': 185
-            },
-            'matches': 0,
-            'customStats': {},
-            'concurrency': 4,
-            'pendingRequests': 4
-        };
-    }
-};
-let report = {
-    'timestamp': '2018-05-15T14:20:02.109Z',
-    'scenariosCreated': 96,
-    'scenariosCompleted': 92,
-    'requestsCompleted': 185,
-    'latency': {
-        'min': 167.6,
-        'max': 667.5,
-        'median': 193.8,
-        'p95': 322.4,
-        'p99': 609.6
-    },
-    'rps': {
-        'count': 189,
-        'mean': 19.15
-    },
-    'scenarioDuration': {
-        'min': 367.7,
-        'max': 1115.1,
-        'median': 385.1,
-        'p95': 780.8,
-        'p99': 1060.9
-    },
-    'scenarioCounts': {
-        'Scenario': 96
-    },
-    'errors': {},
-    'codes': {
-        '201': 185
-    },
-    'matches': 0,
-    'customStats': {},
-    'concurrency': 4,
-    'pendingRequests': 4
-};
-let info = { info: 'mickey' };
-describe('Run test', () => {
-    let sandbox, artilleryStub, customJSProcessorStub, getFileStub,
-        testFileConnectorStub, loggerInfoStub, reporterConnectorPostStatsStub, reporterConnectorSubscribeToReportStub,
-        eeOnStub, getMetricsSpy, printMetricsSpy, prometheusAdapterStub, influxdbAdapterStub;
+// Black-box tests of the artillery v2 run pipeline: a real artillery process
+// runs short scenarios against a local hapi target, while a mock predator
+// captures everything the runner and the predator plugin post back. No stubs —
+// if artillery v2 breaks csv/processor/expect handling, these fail.
 
-    let jobConfig = {
-        jobId: 'some_job_id',
-        testId: 'mickeys-test',
-        type: 'load_test',
+const should = require('should');
+const http = require('node:http');
+const runner = require('../../../app/models/runner');
+
+// Plain node:http mocks — @hapi/hapi 18 hangs on POST payloads under modern
+// Node, which is exactly the kind of legacy this suite exists to retire.
+const startServer = (handler) => new Promise((resolve) => {
+    const server = http.createServer(handler);
+    server.listen(0, '127.0.0.1', () => resolve(server));
+});
+const readJson = (req) => new Promise((resolve) => {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => { try { resolve(body ? JSON.parse(body) : {}); } catch (e) { resolve(body); } });
+});
+
+describe('Run test with real artillery v2', function () {
+    this.timeout(120000);
+
+    let target;
+    let predator;
+    let targetRequests;
+    let statsPosts;
+    let currentTest;
+
+    const jobConfigFor = (overrides = {}) => Object.assign({
+        jobId: 'job-id',
+        testId: 'test-id',
+        reportId: 'report-id',
+        containerId: 'runner-under-test',
+        jobType: 'load_test',
+        environment: 'test',
+        duration: 2,
+        arrivalRate: 3,
         httpPoolSize: 100,
-        statsInterval: 30
+        statsInterval: 30,
+        predatorUrl: null // filled in beforeEach
+    }, overrides);
+
+    const baseTest = () => ({
+        id: 'test-id',
+        name: 'v2 pipeline test',
+        artillery_test: {
+            config: {
+                target: null, // filled per test
+                phases: [{ duration: 2, arrivalRate: 3 }]
+            },
+            scenarios: [{
+                name: 'hit target',
+                flow: [{ post: { url: '/data', json: { token: 'predator-rules' } } }]
+            }]
+        }
+    });
+
+    before(async () => {
+        target = await startServer(async (req, res) => {
+            targetRequests.push({ path: req.url, payload: await readJson(req), headers: req.headers });
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end('{"ok":true}');
+        });
+
+        predator = await startServer(async (req, res) => {
+            const json = (code, payload) => {
+                res.writeHead(code, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(payload));
+            };
+            if (req.method === 'GET' && /^\/v1\/tests\/[^/]+$/.test(req.url)) {
+                return json(200, currentTest);
+            }
+            if (req.method === 'GET' && req.url.startsWith('/v1/files/')) {
+                res.writeHead(200, { 'Content-Type': 'text/plain' });
+                return res.end(currentTest.__file || '');
+            }
+            if (req.method === 'GET' && req.url.startsWith('/v1/processors/')) {
+                return json(200, { javascript: currentTest.__processor });
+            }
+            if (req.method === 'POST' && req.url.endsWith('/subscribe')) {
+                await readJson(req);
+                return json(201, {});
+            }
+            if (req.method === 'POST' && req.url.endsWith('/stats')) {
+                statsPosts.push(await readJson(req));
+                return json(204, {});
+            }
+            json(404, { message: 'not found' });
+        });
+    });
+
+    after(async () => {
+        target.close();
+        predator.close();
+    });
+
+    beforeEach(() => {
+        targetRequests = [];
+        statsPosts = [];
+        currentTest = baseTest();
+        currentTest.artillery_test.config.target = `http://127.0.0.1:${target.address().port}`;
+    });
+
+    const runWith = async (overrides) => {
+        const jobConfig = jobConfigFor(Object.assign({
+            predatorUrl: `http://127.0.0.1:${predator.address().port}/v1`
+        }, overrides));
+        await runner.runTest(jobConfig);
+        return jobConfig;
     };
 
-    before(() => {
-        sandbox = sinon.createSandbox();
-        artilleryStub = sandbox.stub(artillery, 'runner');
-        loggerInfoStub = sandbox.stub(logger, 'info');
-        reporterConnectorPostStatsStub = sandbox.stub(reporterConnector, 'postStats');
-        reporterConnectorSubscribeToReportStub = sandbox.stub(reporterConnector, 'subscribeToReport');
-        testFileConnectorStub = sandbox.stub(testFileConnector, 'getTest');
-        customJSProcessorStub = sandbox.stub(customJSConnector, 'getProcessor');
-        getFileStub = sandbox.stub(customJSConnector, 'getFile');
-        getMetricsSpy = sandbox.spy(metrics, 'getMetrics');
-        printMetricsSpy = sandbox.spy(metrics, 'printMetrics');
-        prometheusAdapterStub = sandbox.stub(prometheusAdapter, 'buildMetricsPlugin');
-        influxdbAdapterStub = sandbox.stub(influxdbAdapter, 'buildMetricsPlugin');
-    });
-    beforeEach(() => {
-        sandbox.resetHistory();
-        ee = new EventEmitter();
-        ee.run = () => {
-            ee.emit('phaseStarted');
-            ee.emit('phaseCompleted');
-            ee.emit('stats');
-            ee.emit('done');
-        };
-        eeOnStub = sandbox.stub(ee, 'on').withArgs('done').yields(report)
-            .withArgs('stats').yields(stats)
-            .withArgs('phaseStarted').yields(info)
-            .withArgs('phaseCompleted').yields();
-    });
-    after(() => {
-        sandbox.restore();
+    const phaseStatuses = () => statsPosts.map(p => p.phase_status);
+
+    it('runs a load test and reports the full phase lifecycle with legacy-shaped stats', async () => {
+        await runWith();
+
+        phaseStatuses().should.containEql('started_phase');
+        phaseStatuses().should.containEql('done');
+        const intermediate = statsPosts.find(p => p.phase_status === 'first_intermediate' || p.phase_status === 'intermediate');
+        should.exist(intermediate, 'expected at least one intermediate stats post');
+
+        const report = JSON.parse(intermediate.data);
+        report.should.have.properties(['scenariosCreated', 'requestsCompleted', 'latency', 'rps', 'codes']);
+        report.codes.should.have.property('200');
+        report.rps.mean.should.be.above(0);
+
+        targetRequests.length.should.be.above(0);
+        targetRequests.every(r => r.payload && r.payload.token === 'predator-rules').should.eql(true);
     });
 
-    [
-        {
-            expectedResult: consts.EXPECTED_ARTILLERY_CUSTOM_TEST,
-            test: JSON.parse(JSON.stringify(consts.VALID_CUSTOM_TEST)),
-            metricsPluginName: 'none'
-        },
-        {
-            expectedResult: consts.EXPECTED_ARTILLERY_CUSTOM_TEST,
-            test: JSON.parse(JSON.stringify(consts.VALID_CUSTOM_TEST)),
-            metricsPluginName: 'prometheus',
-            metricsExportConfig: Buffer.from(JSON.stringify(consts.PROMETHEUS_CONFIGURATION)).toString('base64')
-        },
-        {
-            expectedResult: consts.EXPECTED_ARTILLERY_CUSTOM_TEST,
-            test: JSON.parse(JSON.stringify(consts.VALID_CUSTOM_TEST)),
-            metricsPluginName: 'influx',
-            metricsExportConfig: Buffer.from(JSON.stringify(consts.INFLUX_CONFIGURATION)).toString('base64')
-        }
-    ]
-        .forEach((testConfig) => {
-            it(`successfully run test with metrics plugin: ${testConfig.metricsPluginName}`, async () => {
-                testConfig.expectedResult.config.plugins = {};
-                if (testConfig.metricsPluginName === 'influx') {
-                    influxdbAdapterStub.returns(consts.INFLUX_CONFIGURATION);
-                    testConfig.expectedResult.config.plugins = consts.INFLUX_CONFIGURATION;
-                } else if (testConfig.metricsPluginName === 'prometheus') {
-                    prometheusAdapterStub.returns(consts.PROMETHEUS_CONFIGURATION);
-                    testConfig.expectedResult.config.plugins = consts.PROMETHEUS_CONFIGURATION;
-                }
+    it('runs custom javascript processors (beforeRequest hook reaches the wire)', async () => {
+        currentTest.processor_id = 'processor-under-test';
+        currentTest.__processor = [
+            'module.exports.signRequest = function (requestParams, context, ee, next) {',
+            "  requestParams.headers = requestParams.headers || {};",
+            "  requestParams.headers['x-signature'] = 'signed-by-processor';",
+            '  return next();',
+            '};'
+        ].join('\n');
+        currentTest.artillery_test.scenarios[0].flow[0].post.beforeRequest = 'signRequest';
 
-                let tempJobConfig = Object.assign({}, jobConfig);
-                tempJobConfig.arrivalRate = 10;
-                tempJobConfig.duration = 5;
-                tempJobConfig.notes = 'Best Test Ever';
-                tempJobConfig.metricsExportConfig = testConfig.metricsExportConfig;
-                tempJobConfig.metricsPluginName = testConfig.metricsPluginName;
+        await runWith();
 
-                testFileConnectorStub.resolves(testConfig.test);
-                artilleryStub.resolves(ee);
-                reporterConnectorSubscribeToReportStub.resolves();
-                reporterConnectorPostStatsStub.resolves();
-                let exception;
-                try {
-                    await runner.runTest(tempJobConfig);
-                } catch (e) {
-                    exception = e;
-                }
-                should.not.exist(exception);
-                artilleryStub.args[0][0].should.eql(testConfig.expectedResult);
-                testFileConnectorStub.calledOnce.should.eql(true);
+        phaseStatuses().should.containEql('done');
+        targetRequests.length.should.be.above(0);
+        targetRequests.every(r => r.headers['x-signature'] === 'signed-by-processor').should.eql(true);
+    });
 
-                loggerInfoStub.called.should.eql(true);
-                let loggerIndex = 1;
-                loggerInfoStub.args[loggerIndex][0].should.eql('Starting test: test_name, testId: test_id');
-                loggerInfoStub.args[++loggerIndex][0].should.eql('Starting phase: %s - %j');
-                loggerInfoStub.args[loggerIndex][2].should.eql(JSON.stringify(info));
-                loggerInfoStub.args[++loggerIndex][0].should.eql('Phase completed - %s');
-                loggerInfoStub.args[++loggerIndex][0].indexOf('Completed').should.be.greaterThan(-1);
-                getMetricsSpy.called.should.eql(true);
-                printMetricsSpy.called.should.eql(true);
-            });
-        });
+    it('feeds csv payload variables into requests', async () => {
+        currentTest.csv_file_id = 'csv-under-test';
+        currentTest.__file = 'username,city\nmickey,tel aviv\ndonald,haifa\n';
+        currentTest.artillery_test.scenarios[0].flow[0].post.json = { user: '{{ username }}', city: '{{ city }}' };
 
-    it('successfully run test with custom js (processor)', async () => {
-        const processorId = uuid();
+        await runWith();
 
-        let tempJobConfig = Object.assign({}, jobConfig);
-        tempJobConfig.arrivalRate = 10;
-        tempJobConfig.duration = 5;
-        tempJobConfig.rampTo = 20;
-        tempJobConfig.maxVusers = 20;
-        tempJobConfig.notes = 'Test using processor_id for custom-js';
+        phaseStatuses().should.containEql('done');
+        targetRequests.length.should.be.above(0);
+        const users = new Set(targetRequests.map(r => r.payload.user));
+        [...users].every(u => ['mickey', 'donald'].includes(u)).should.eql(true, `unexpected users: ${[...users]}`);
+    });
 
-        let testWithProcessorId = Object.assign({}, consts.VALID_CUSTOM_TEST);
-        testWithProcessorId.processor_id = processorId;
+    it('runs functional tests with expectations', async () => {
+        currentTest.artillery_test.scenarios[0].flow[0].post.expect = [{ statusCode: 200 }];
 
-        testFileConnectorStub.resolves(testWithProcessorId);
-        artilleryStub.resolves(ee);
-        reporterConnectorSubscribeToReportStub.resolves();
-        reporterConnectorPostStatsStub.resolves();
-        customJSProcessorStub.resolves({
-            name: 'add_processor',
-            javascript: `let addFunction = (a, b) => {
-                            return a + b;
-                        }`
-        });
+        await runWith({ jobType: 'functional_test', arrivalCount: 5, arrivalRate: undefined });
 
-        let exception;
+        phaseStatuses().should.containEql('done');
+        targetRequests.length.should.eql(5);
+    });
+
+    it('does not double-report with multiple workers', async () => {
+        process.env.WORKERS = '2';
         try {
-            await runner.runTest(tempJobConfig);
-        } catch (e) {
-            exception = e;
+            await runWith();
+        } finally {
+            delete process.env.WORKERS;
         }
-        should.not.exist(exception);
+
+        phaseStatuses().filter(p => p === 'done').length.should.eql(1, 'done must post exactly once');
+        const reported = statsPosts
+            .filter(p => p.phase_status === 'first_intermediate' || p.phase_status === 'intermediate')
+            .reduce((sum, p) => sum + JSON.parse(p.data).requestsCompleted, 0);
+        reported.should.eql(targetRequests.length, 'reported requests must equal actual requests');
     });
 
-    it('successfully run with csv file', async () => {
-        const csvFileId = uuid();
+    it('processors can require modules bundled with the runner', async () => {
+        currentTest.processor_id = 'processor-with-require';
+        currentTest.__processor = [
+            "const { v4: uuid } = require('uuid');",
+            'module.exports.tagRequest = function (requestParams, context, ee, next) {',
+            "  requestParams.headers = requestParams.headers || {};",
+            "  requestParams.headers['x-request-id'] = uuid();",
+            '  return next();',
+            '};'
+        ].join('\n');
+        currentTest.artillery_test.scenarios[0].flow[0].post.beforeRequest = 'tagRequest';
 
-        let tempJobConfig = Object.assign({}, jobConfig);
-        tempJobConfig.arrivalRate = 10;
-        tempJobConfig.duration = 5;
-        tempJobConfig.rampTo = 20;
-        tempJobConfig.maxVusers = 20;
-        tempJobConfig.notes = 'Test using csv file';
+        await runWith();
 
-        let testWithCSV = Object.assign({}, consts.VALID_CUSTOM_TEST);
-        testWithCSV.csv_file_id = csvFileId;
-
-        testFileConnectorStub.resolves(testWithCSV);
-        artilleryStub.resolves(ee);
-        reporterConnectorSubscribeToReportStub.resolves();
-        reporterConnectorPostStatsStub.resolves();
-        getFileStub.resolves('id,name\n' +
-            '1,eli\n' +
-            '2,mickey\n' +
-            '3,niv\n' +
-            '4,manor');
-
-        let exception;
-        try {
-            await runner.runTest(tempJobConfig);
-        } catch (e) {
-            exception = e;
-        }
-        should.not.exist(exception);
-
-        let artilleryArgs = artilleryStub.args[0];
-        artilleryArgs[0].config.payload.fields.should.eql([
-            'id',
-            'name'
-        ]);
-        artilleryArgs[1].should.eql([
-            [
-                '1',
-                'eli'
-            ],
-            [
-                '2',
-                'mickey'
-            ],
-            [
-                '3',
-                'niv'
-            ],
-            [
-                '4',
-                'manor'
-            ]
-        ]);
+        phaseStatuses().should.containEql('done');
+        targetRequests.length.should.be.above(0);
+        targetRequests.every(r => /^[0-9a-f-]{36}$/.test(r.headers['x-request-id'])).should.eql(true);
     });
 
-    it('successfully run functional_test without assertions', async () => {
-        let tempJobConfig = Object.assign({}, jobConfig);
-        tempJobConfig.arrivalCount = 10;
-        tempJobConfig.duration = 5;
-        tempJobConfig.maxVusers = 20;
-        tempJobConfig.notes = 'Functional test';
-        tempJobConfig.jobType = 'functional_test';
-
-        let functionalTest = Object.assign({}, consts.VALID_CUSTOM_TEST);
-        testFileConnectorStub.resolves(functionalTest);
-        artilleryStub.resolves(ee);
-        reporterConnectorSubscribeToReportStub.resolves();
-        reporterConnectorPostStatsStub.resolves();
-
-        let exception;
-        try {
-            await runner.runTest(tempJobConfig);
-        } catch (e) {
-            exception = e;
-        }
-        should.not.exist(exception);
-
-        let artilleryArgs = artilleryStub.args[0];
-        artilleryArgs[0].config.phases[0].should.eql(
-            {
-                duration: 5,
-                arrivalCount: 10,
-                maxVusers: 20
-            }
-        );
-
-        artilleryArgs[0].config.plugins.should.eql({});
+    it('rejects when the test file cannot be fetched', async () => {
+        currentTest = null; // GET /tests/:id returns empty -> connector fails
+        await runWith().should.be.rejected();
     });
 
-    it('successfully run functional_test with assertions', async () => {
-        let tempJobConfig = Object.assign({}, jobConfig);
-        tempJobConfig.arrivalCount = 10;
-        tempJobConfig.duration = 5;
-        tempJobConfig.maxVusers = 20;
-        tempJobConfig.notes = 'Functional test';
-        tempJobConfig.jobType = 'functional_test';
-
-        let functionalTest = Object.assign({}, consts.VALID_CUSTOM_TEST_WITH_EXPECT);
-        testFileConnectorStub.resolves(functionalTest);
-        artilleryStub.resolves(ee);
-        reporterConnectorSubscribeToReportStub.resolves();
-        reporterConnectorPostStatsStub.resolves();
-
-        let exception;
-        try {
-            await runner.runTest(tempJobConfig);
-        } catch (e) {
-            exception = e;
-        }
-        should.not.exist(exception);
-
-        let artilleryArgs = artilleryStub.args[0];
-        artilleryArgs[0].config.phases[0].should.eql(
-            {
-                duration: 5,
-                arrivalCount: 10,
-                maxVusers: 20
-            }
-        );
-
-        artilleryArgs[0].config.plugins.should.eql({ expect: {} });
-    });
-
-    it('fail to run test with processor ->  GET processor error', async () => {
-        let expectedError = new Error('Failed to retrieve processor');
-        const processorId = uuid();
-        let testWithProcessorId = Object.assign({}, consts.VALID_CUSTOM_TEST);
-        testWithProcessorId.processor_id = processorId;
-
-        testFileConnectorStub.resolves(testWithProcessorId);
-        artilleryStub.resolves(ee);
-        reporterConnectorSubscribeToReportStub.resolves();
-        reporterConnectorPostStatsStub.resolves();
-        customJSProcessorStub.rejects(expectedError);
-
-        let exception;
-        try {
-            await runner.runTest(jobConfig);
-        } catch (e) {
-            exception = e;
-        }
-        should.exist(exception);
-        exception.should.be.eql(expectedError);
-    });
-
-    it('fail to run test -> test file error', async () => {
-        let expectedError = new Error('Failed to retrieve test file');
-        testFileConnectorStub.rejects(expectedError);
-        artilleryStub.resolves(ee);
-        reporterConnectorSubscribeToReportStub.resolves();
-        reporterConnectorPostStatsStub.resolves();
-        let exception;
-        try {
-            await runner.runTest(jobConfig);
-        } catch (e) {
-            exception = e;
-        }
-        should.exist(exception);
-        exception.should.be.eql(expectedError);
-
-        testFileConnectorStub.calledOnce.should.eql(true);
-        loggerInfoStub.called.should.eql(false);
-    });
-
-    it('fail to send end report to reporter -> test throws exception', async () => {
-        let tempJobConfig = Object.assign({}, jobConfig);
-        tempJobConfig.arrivalRate = 10;
-        tempJobConfig.duration = 5;
-        tempJobConfig.notes = 'Best Test Ever';
-
-        const expectedError = new Error('Failed to send final report to reporter');
-
-        testFileConnectorStub.resolves(consts.VALID_CUSTOM_TEST);
-        artilleryStub.resolves(ee);
-        reporterConnectorSubscribeToReportStub.resolves();
-        reporterConnectorPostStatsStub.rejects(expectedError);
-        let exception;
-        try {
-            await runner.runTest(tempJobConfig);
-        } catch (e) {
-            exception = e;
-        }
-
-        should.exist(exception);
-        should(exception).eql(expectedError);
-    });
-
-    it('fail to run test with csv -> GET file throws exception', async () => {
-        let expectedError = new Error('socket timeout');
-        let tempJobConfig = Object.assign({}, jobConfig);
-        let testWithCSV = Object.assign({}, consts.VALID_CUSTOM_TEST);
-        testWithCSV.csv_file_id = uuid();
-        testFileConnectorStub.resolves(testWithCSV);
-        getFileStub.rejects(new Error('socket timeout'));
-
-        let exception;
-        try {
-            await runner.runTest(tempJobConfig);
-        } catch (e) {
-            exception = e;
-        }
-        should.exist(exception);
-        exception.should.be.eql(expectedError);
-
-        testFileConnectorStub.calledOnce.should.eql(true);
-        loggerInfoStub.called.should.eql(false);
-    });
-
-    it('fail to run test with csv -> failure to parse csv', async () => {
-        const csvFileId = uuid();
-        let expectedError = new Error(`Failure to parse csv file with id: ${csvFileId}\nTypeError: buf.slice is not a function`);
-        let tempJobConfig = Object.assign({}, jobConfig);
-        let testWithCSV = Object.assign({}, consts.VALID_CUSTOM_TEST);
-        testWithCSV.csv_file_id = csvFileId;
-        testFileConnectorStub.resolves(testWithCSV);
-        getFileStub.resolves({ key: 'value' });
-
-        let exception;
-        try {
-            await runner.runTest(tempJobConfig);
-        } catch (e) {
-            exception = e;
-        }
-        should.exist(exception);
-        exception.should.be.eql(expectedError);
-
-        testFileConnectorStub.calledOnce.should.eql(true);
-        loggerInfoStub.called.should.eql(false);
+    it('rejects when the csv file cannot be parsed', async () => {
+        currentTest.csv_file_id = 'bad-csv';
+        currentTest.__file = 'a,b\n"unterminated\n';
+        await runWith().should.be.rejectedWith(/Failure to parse csv/);
     });
 });

@@ -11,7 +11,9 @@ const runner = require('./models/runner'),
     errorHandler = require('./handler/errorHandler'),
     { version: PREDATOR_RUNNER_VERSION } = require('../package.json');
 
-const RUNNER_TIMEOUT_GRACE_MS = 300;
+// artillery v2 runs as a separate process with its own boot and teardown, so
+// the kill-switch needs real headroom beyond the configured duration.
+const RUNNER_TIMEOUT_GRACE_MS = 30000;
 
 const getContainerId = () => {
     let containerId = uuid();
@@ -58,7 +60,7 @@ let start = async () => {
         verifyPredatorVersion();
         setTimeout(function() {
             process.kill(process.pid, 'SIGUSR1');
-        }, (jobConfig.duration * 1000) + jobConfig.delayRunnerMs + RUNNER_TIMEOUT_GRACE_MS);
+        }, (jobConfig.duration * 1000) + (jobConfig.delayRunnerMs || 0) + RUNNER_TIMEOUT_GRACE_MS);
         await runner.runTest(jobConfig);
         logger.info('Finished running test successfully');
         process.exit(0);

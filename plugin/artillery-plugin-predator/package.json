@@ -1,0 +1,7 @@
+{
+  "name": "artillery-plugin-predator",
+  "version": "1.0.0",
+  "description": "Reports artillery v2 stats back to a Predator server in the legacy schema",
+  "main": "index.js",
+  "license": "Apache-2.0"
+}

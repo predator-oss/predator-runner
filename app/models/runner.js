@@ -1,77 +1,69 @@
 'use strict';
 
-const artillery = require('artillery/core'),
-    csv = require('csv-parse/lib/sync'),
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { parse: csv } = require('csv-parse/sync'),
     testFileConnector = require('../connectors/testFileConnector'),
     fileDownloadConnector = require('../connectors/fileDownloadConnector'),
     reporterConnector = require('../connectors/reporterConnector'),
     logger = require('../utils/logger'),
-    reportPrinter = require('./reportPrinter'),
     progressCalculator = require('../helpers/progressCalculator'),
-    metrics = require('../helpers/runnerMetrics'),
     constants = require('../utils/consts');
 
-let statsToRecord = 0;
-let firstIntermediate = true;
+// Artillery v2 runs as its own process (its package exports forbid embedding),
+// with artillery-plugin-predator inside it translating stats back to predator.
+// This module prepares the script on disk and supervises the artillery run.
 
 module.exports.runTest = async (jobConfig) => {
     const test = await testFileConnector.getTest(jobConfig);
-    let processorJavascript = await getProcessorJavascript(jobConfig, test);
+    const processorJavascript = await getProcessorJavascript(jobConfig, test);
     const csvData = await getCSVData(jobConfig, test);
     await reporterConnector.subscribeToReport(jobConfig, test);
-    updateTestParameters(jobConfig, test.artillery_test, processorJavascript, csvData);
+
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'predator-run-'));
+    updateTestParameters(jobConfig, test.artillery_test, processorJavascript, csvData, workDir);
     logger.info(`Starting test: ${test.name}, testId: ${test.id}`);
     progressCalculator.calculateTotalNumberOfScenarios(jobConfig);
 
-    const ee = await artillery.runner(test.artillery_test, csvData ? csvData.data : undefined, { isAggregateReport: false });
+    const scriptPath = path.join(workDir, 'script.json');
+    fs.writeFileSync(scriptPath, JSON.stringify(test.artillery_test));
+
+    // artillery's exports map blocks require.resolve into the package, so walk
+    // the module paths for the real bin file the .bin shim points at.
+    const artilleryBin = module.paths
+        .map(p => path.join(p, 'artillery', 'bin', 'run'))
+        .find(p => fs.existsSync(p));
+    if (!artilleryBin) {
+        throw new Error('artillery binary not found in module paths');
+    }
+    logger.info({ script: test.artillery_test.config }, 'Spawning artillery');
+
     return new Promise((resolve, reject) => {
-        ee.on('phaseStarted', (info) => {
-            logger.info('Starting phase: %s - %j', new Date(), JSON.stringify(info));
-            const phaseIndex = info.index ? info.index.toString() : '0';
-            reporterConnector.postStats(jobConfig, {
-                phase_index: phaseIndex,
-                phase_status: 'started_phase',
-                data: JSON.stringify(info)
-            });
+        const child = spawn(process.execPath, [artilleryBin, 'run', scriptPath], {
+            stdio: ['ignore', 'inherit', 'inherit'],
+            env: Object.assign({}, process.env, {
+                // Processors historically could require() modules bundled with
+                // the runner (the v1 engine compiled them with our module
+                // paths); NODE_PATH restores that resolution for the v2 child.
+                NODE_PATH: path.join(__dirname, '..', '..', 'node_modules'),
+                PREDATOR_URL: jobConfig.predatorUrl,
+                TEST_ID: jobConfig.testId,
+                REPORT_ID: jobConfig.reportId,
+                RUNNER_ID: jobConfig.containerId,
+                ARTILLERY_DISABLE_TELEMETRY: 'true'
+            })
         });
-        ee.on('phaseCompleted', () => {
-            logger.info('Phase completed - %s', new Date());
+        child.on('error', reject);
+        child.on('exit', (code) => {
+            if (code === 0) {
+                resolve();
+            } else {
+                reject(new Error(`artillery exited with code ${code}`));
+            }
         });
-        ee.on('stats', async (stats) => {
-            statsToRecord++;
-            let intermediateReport = stats.report();
-            let progress = progressCalculator.calculateProgress(stats._completedScenarios + stats._scenariosAvoided);
-            logger.info(`Completed ${progress}%`);
-            reportPrinter.print('intermediate', intermediateReport);
-            delete intermediateReport.latencies;
-
-            reporterConnector.postStats(jobConfig, {
-                phase_status: firstIntermediate ? 'first_intermediate' : 'intermediate',
-                data: JSON.stringify(intermediateReport)
-            });
-            firstIntermediate = false;
-
-            const runnerMetrics = await metrics.getMetrics();
-            await metrics.printMetrics(runnerMetrics);
-
-            statsToRecord--;
-        });
-        ee.on('done', async (report) => {
-            let handleFinishedReport = async () => {
-                try {
-                    await reporterConnector.postStats(jobConfig, {
-                        phase_status: 'done',
-                        data: JSON.stringify({ message: 'Test Finished' })
-                    });
-                    resolve();
-                } catch (e) {
-                    logger.error({ error: e }, 'Failed to send final report to predator');
-                    reject(e);
-                }
-            };
-            await waitForLiveStatsToFinish(handleFinishedReport);
-        });
-        ee.run();
     });
 };
 
@@ -98,14 +90,16 @@ function updateRunningParameters(testFile, jobConfig) {
     }
 }
 
-let updateTestParameters = (jobConfig, testFile, processorJavascript, csvData) => {
+const updateTestParameters = (jobConfig, testFile, processorJavascript, csvData, workDir) => {
     if (!testFile.config.plugins) {
         testFile.config.plugins = {};
     }
 
-    const isUseExpectPlugin = isTestHasExpectations(testFile);
-    if (isUseExpectPlugin) {
-        testFile.config.plugins.expect = {};
+    // Always report back to predator.
+    testFile.config.plugins.predator = {};
+
+    if (isTestHasExpectations(testFile)) {
+        testFile.config.plugins.expect = { reportFailuresAsErrors: true };
     } else {
         delete testFile.config.plugins.expect;
     }
@@ -113,15 +107,16 @@ let updateTestParameters = (jobConfig, testFile, processorJavascript, csvData) =
     if (jobConfig.metricsExportConfig && jobConfig.metricsPluginName) {
         injectMetricsPlugins(testFile, jobConfig);
     }
+
     if (processorJavascript) {
-        let m = new module.constructor();
-        m.paths = module.paths;
-        m._compile(processorJavascript, 'none');
-        testFile.config.processor = m.exports;
+        // v2 loads processors from a file path relative to the script.
+        fs.writeFileSync(path.join(workDir, 'processor.js'), processorJavascript);
+        testFile.config.processor = './processor.js';
     }
 
     if (csvData) {
-        testFile.config.payload = { fields: csvData.fields };
+        fs.writeFileSync(path.join(workDir, 'payload.csv'), csvData.raw);
+        testFile.config.payload = { path: './payload.csv', fields: csvData.fields, skipHeader: true };
     }
 
     if (!testFile.config.phases) {
@@ -132,17 +127,18 @@ let updateTestParameters = (jobConfig, testFile, processorJavascript, csvData) =
     }
     testFile.config.http.pool = jobConfig.httpPoolSize;
 
-    testFile.config.statsInterval = jobConfig.statsInterval;
-
     updateRunningParameters(testFile, jobConfig);
     logger.info({ updated_test_config: testFile.config }, 'Test successfully updated parameters');
 };
 
 function injectMetricsPlugins(testFile, jobConfig) {
     const metricsPluginName = jobConfig.metricsPluginName.toLowerCase();
+    if (metricsPluginName !== 'prometheus') {
+        throw new Error(`Metrics plugin '${metricsPluginName}' is not supported; only prometheus export is available with artillery v2.`);
+    }
     const metricsAdapter = require(`../adapters/${metricsPluginName}Adapter`);
-    let asciiMetricsExportConfig = (Buffer.from(jobConfig.metricsExportConfig, 'base64').toString('ascii'));
-    let parsedMetricsConfig = JSON.parse(asciiMetricsExportConfig);
+    const asciiMetricsExportConfig = (Buffer.from(jobConfig.metricsExportConfig, 'base64').toString('ascii'));
+    const parsedMetricsConfig = JSON.parse(asciiMetricsExportConfig);
 
     const metricsPlugin = metricsAdapter.buildMetricsPlugin(parsedMetricsConfig, jobConfig);
     Object.assign(testFile.config.plugins, metricsPlugin);
@@ -150,19 +146,19 @@ function injectMetricsPlugins(testFile, jobConfig) {
 
 async function getProcessorJavascript(jobConfig, test) {
     let javascript;
-    if (test['file_id']) {
-        logger.warn('DEPRECATED: Using file_id in tests is deprecated and will soon be no longer supported. Please use the Processors API in order to use custom javascript in your tests.\n Link to API documentation: https://predator-oss.github.io/predator/indexapiref.html#tag/Processors');
-        const fileContentBase64 = await fileDownloadConnector.getFile(jobConfig, test['file_id']);
+    if (test.file_id) {
+        logger.warn('DEPRECATED: Using file_id in tests is deprecated. Please use the Processors API.');
+        const fileContentBase64 = await fileDownloadConnector.getFile(jobConfig, test.file_id);
         javascript = Buffer.from(fileContentBase64, 'base64').toString('utf8');
-    } else if (test['processor_id']) {
-        const processor = await fileDownloadConnector.getProcessor(jobConfig, test['processor_id']);
+    } else if (test.processor_id) {
+        const processor = await fileDownloadConnector.getProcessor(jobConfig, test.processor_id);
         javascript = processor.javascript;
     }
     return javascript;
 }
 
 async function getCSVData(jobConfig, test) {
-    const csvFileId = test['csv_file_id'];
+    const csvFileId = test.csv_file_id;
     if (!csvFileId) {
         return;
     }
@@ -181,29 +177,18 @@ async function getCSVData(jobConfig, test) {
         number_of_rows: csvData.length,
         first_row: csvData[0]
     }, 'Parsed CSV successfully');
-    return { fields, data: csvData };
+    return { fields, data: csvData, raw: payload };
 }
 
-let waitForLiveStatsToFinish = async (callback) => {
-    if (statsToRecord) {
-        setTimeout(() => {
-            waitForLiveStatsToFinish(callback);
-        }, 1500);
-    } else {
-        await callback();
-    }
-};
-
 function isTestHasExpectations(testFile) {
-    let isTestHasExpectations = false;
+    let hasExpectations = false;
     testFile.scenarios.forEach((scenario) => {
-        const flow = scenario.flow;
-        flow.forEach((request) => {
+        scenario.flow.forEach((request) => {
             const method = Object.keys(request)[0];
             if (request[method].expect && request[method].expect.length > 0) {
-                isTestHasExpectations = true;
+                hasExpectations = true;
             }
         });
     });
-    return isTestHasExpectations;
+    return hasExpectations;
 }
