@@ -17,3 +17,4 @@ allowBuilds:
   '@playwright/browser-chromium': false
   dtrace-provider: false
   protobufjs: false
+  unix-dgram: false
