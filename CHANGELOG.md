@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.8.4](https://github.com/predator-oss/predator-runner/compare/v1.8.3...v1.8.4) (2026-07-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* artillery v2 engine (#2)
+
+### Features
+
+* artillery v2 engine ([#2](https://github.com/predator-oss/predator-runner/issues/2)) ([c5efbbb](https://github.com/predator-oss/predator-runner/commit/c5efbbbbaf23d40723a6703613f7cee583ff508b))
+* migrate to pnpm ([#4](https://github.com/predator-oss/predator-runner/issues/4)) ([20f16ea](https://github.com/predator-oss/predator-runner/commit/20f16ea27f78865ae1a4b8d0ed4090c5e81ac4db))
+
 ### [1.8.3](https://github.com/predator-oss/predator-runner/compare/v1.8.2...v1.8.3) (2026-07-29)
 
 ### [1.8.2](https://github.com/predator-oss/predator-runner/compare/v1.8.0...v1.8.2) (2026-07-29)
