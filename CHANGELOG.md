@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.9.0](https://github.com/predator-oss/predator-runner/compare/v1.8.4...v1.9.0) (2026-07-30)
+
+
+### Features
+
+* kafka load engine with consumer-lag reporting ([#5](https://github.com/predator-oss/predator-runner/issues/5)) ([c528af4](https://github.com/predator-oss/predator-runner/commit/c528af41ecaec88a10067de04934e5cd34c21cae))
+* monitor multiple consumer groups for lag ([#6](https://github.com/predator-oss/predator-runner/issues/6)) ([d9e40aa](https://github.com/predator-oss/predator-runner/commit/d9e40aa0ee057cf6a4091e80df3238c7f978832e))
+
 ### [1.8.4](https://github.com/predator-oss/predator-runner/compare/v1.8.3...v1.8.4) (2026-07-29)
 
 
