@@ -101,6 +101,7 @@ describe('Kafka engine with real artillery and a real broker', function () {
         intermediates.length.should.be.above(0);
         const blob = JSON.stringify(intermediates);
         blob.should.containEql('kafka.messages_sent');
+        blob.should.containEql(`kafka.messages_sent.${TOPIC}`);
         blob.should.containEql('kafka.publish_latency');
         blob.should.containEql('kafka.consumer_lag_total.lagging-group');
         blob.should.containEql('kafka.consumer_lag_total.second-group');
