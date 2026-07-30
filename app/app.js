@@ -2,14 +2,14 @@
 require('./utils/verifier').verifyEnvironmentVars();
 
 const { v4: uuid } = require('uuid');
-const semver = require('semver');
 
 const runner = require('./models/runner'),
     logger = require('./utils/logger'),
     jobConfig = require('./config/jobConfig'),
     reporterConnector = require('./connectors/reporterConnector'),
     errorHandler = require('./handler/errorHandler'),
-    { version: PREDATOR_RUNNER_VERSION } = require('../package.json');
+    { version: PREDATOR_RUNNER_VERSION } = require('../package.json'),
+    { verifyPredatorVersion } = require('./utils/versionCheck');
 
 // artillery v2 runs as a separate process with its own boot and teardown, so
 // the kill-switch needs real headroom beyond the configured duration.
@@ -23,15 +23,6 @@ const getContainerId = () => {
     }
     return containerId;
 };
-
-function verifyPredatorVersion() {
-    if (semver.major(PREDATOR_RUNNER_VERSION) === semver.major(jobConfig.predatorVersion) &&
-        semver.minor(PREDATOR_RUNNER_VERSION) === semver.minor(jobConfig.predatorVersion)) {
-        return;
-    }
-    logger.error({ predator_runner_version: PREDATOR_RUNNER_VERSION, predator_version: jobConfig.predatorVersion }, 'Predator Runner and Predator must match in major and minor version, please change runner / predator version');
-    throw new Error('Bad Predator-Runner version');
-}
 
 let start = async () => {
     if (jobConfig.delayRunnerMs > 0) {
@@ -57,7 +48,7 @@ let start = async () => {
             });
             process.exit(1);
         });
-        verifyPredatorVersion();
+        verifyPredatorVersion(PREDATOR_RUNNER_VERSION, jobConfig.predatorVersion, logger);
         setTimeout(function() {
             process.kill(process.pid, 'SIGUSR1');
         }, (jobConfig.duration * 1000) + (jobConfig.delayRunnerMs || 0) + RUNNER_TIMEOUT_GRACE_MS);
