@@ -10,12 +10,18 @@
  *     clientId: predator-runner          (optional)
  *     ssl: true                          (optional)
  *     sasl: { mechanism, username, password }   (optional)
+ *     producerPool: 4                    (optional, concurrent producers per worker)
+ *     acks: 1                            (optional, kafkajs acks; default all)
  *
  * scenario:
  *   engine: kafka
  *   flow:
  *     - produce: { topic: orders, key: "{{ id }}", message: '{"id":"{{ id }}"}' }
  *     - think: 1
+ *     - loop:                            (repeats nested steps `count` times)
+ *         - produce: { ... }
+ *         - think: 0.5
+ *       count: 10
  *
  * Emits:
  *   kafka.messages_sent (counter), kafka.errors (counter),
@@ -51,18 +57,25 @@ function KafkaEngine(script, ee, helpers) {
         logLevel: logLevel.NOTHING
     });
 
-    // One producer per worker process — per-VU producers would drown the
-    // broker in connections instead of load.
-    this.producerReady = null;
+    // A small pool of producers per worker process — per-VU producers would
+    // drown the broker in connections, but a single producer serializes acks
+    // per partition (kafkajs awaits each send), capping one-partition
+    // throughput at ~1/RTT msg/s. Round-robining a pool allows concurrent
+    // in-flight sends to the same partition (ordering is irrelevant for load).
+    this.poolSize = this.config.producerPool || 4;
+    this.producers = [];
+    this.nextProducer = 0;
 
 }
 
 KafkaEngine.prototype.getProducer = function () {
-    if (!this.producerReady) {
+    const i = this.nextProducer;
+    this.nextProducer = (this.nextProducer + 1) % this.poolSize;
+    if (!this.producers[i]) {
         const producer = this.kafka.producer();
-        this.producerReady = producer.connect().then(() => producer);
+        this.producers[i] = producer.connect().then(() => producer);
     }
-    return this.producerReady;
+    return this.producers[i];
 };
 
 
@@ -94,6 +107,29 @@ KafkaEngine.prototype.step = function (step, ee) {
         return this.helpers.createThink(step, this.script.config.defaults && this.script.config.defaults.think);
     }
 
+    if (step.loop) {
+        const tasks = step.loop.map((s) => self.step(s, ee));
+        const count = step.count || 1;
+        return function loopTask(context, callback) {
+            let iteration = 0;
+            let idx = 0;
+            const next = (err, ctx) => {
+                if (err) {
+                    return callback(err, ctx);
+                }
+                if (idx >= tasks.length) {
+                    idx = 0;
+                    iteration++;
+                }
+                if (iteration >= count) {
+                    return callback(null, ctx);
+                }
+                tasks[idx++](ctx, next);
+            };
+            next(null, context);
+        };
+    }
+
     if (step.produce) {
         return function produceTask(context, callback) {
             const params = step.produce;
@@ -106,7 +142,7 @@ KafkaEngine.prototype.step = function (step, ee) {
 
             const startedAt = process.hrtime.bigint();
             self.getProducer()
-                .then(producer => producer.send({ topic, messages: [{ key, value }] }))
+                .then(producer => producer.send({ topic, messages: [{ key, value }], acks: self.config.acks }))
                 .then(() => {
                     const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
                     ee.emit('counter', 'kafka.messages_sent', 1);

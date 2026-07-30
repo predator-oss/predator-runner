@@ -133,6 +133,56 @@ describe('Kafka engine with real artillery and a real broker', function () {
         new Set(mine.map(m => m.region)).size.should.be.aboveOrEqual(2, 'variable templating should produce both regions');
     });
 
+    it('loops produce steps, uses a producer pool with acks=1, and reports sends as rps/latency', async () => {
+        currentTest = {
+            id: 'loop-test',
+            name: 'kafka loop test',
+            artillery_test: {
+                config: {
+                    target: `kafka://${BROKERS.join(',')}`,
+                    phases: [{ duration: 5, arrivalRate: 2 }],
+                    engines: { kafka: {} },
+                    kafka: { brokers: BROKERS, producerPool: 2, acks: 1 }
+                },
+                scenarios: [{
+                    name: 'burst',
+                    engine: 'kafka',
+                    flow: [{
+                        loop: [
+                            { produce: { topic: TOPIC, key: 'loop', message: '{"source": "loop-test"}' } },
+                            { think: 0.1 }
+                        ],
+                        count: 3
+                    }]
+                }]
+            }
+        };
+
+        await runner.runTest({
+            jobId: 'job-id', testId: 'loop-test', reportId: 'report-id',
+            containerId: 'loop-runner-test', jobType: 'load_test',
+            environment: 'test', duration: 5, arrivalRate: 2,
+            httpPoolSize: 10, statsInterval: 30,
+            predatorUrl: `http://127.0.0.1:${predator.address().port}/v1`
+        });
+
+        statsPosts.map(p => p.phase_status).should.containEql('done');
+
+        // kafka-only windows must surface sends in the fields predator charts:
+        // requestsCompleted/rps from messages_sent, latency from publish_latency.
+        const intermediates = statsPosts.filter(p => p.phase_status === 'first_intermediate' || p.phase_status === 'intermediate');
+        const withSends = intermediates.map(p => JSON.parse(p.data)).filter(r => ((r.counters || {})['kafka.messages_sent'] || 0) > 0);
+        const sent = withSends.reduce((sum, r) => sum + r.counters['kafka.messages_sent'], 0);
+        // ~10 VUs x 3 loop iterations - loop must multiply produces
+        sent.should.be.aboveOrEqual(12, `loop should produce 3x per VU, sent ${sent}`);
+        withSends.length.should.be.above(0);
+        withSends.forEach((r) => {
+            r.requestsCompleted.should.be.aboveOrEqual(r.counters['kafka.messages_sent']);
+            r.rps.count.should.be.aboveOrEqual(r.counters['kafka.messages_sent']);
+            should.exist(r.latency.median, 'latency should be mapped from kafka.publish_latency');
+        });
+    });
+
     it('runs a mixed script: http scenario and kafka scenario side by side', async () => {
         let httpHits = 0;
         const api = await startServer((req, res) => {

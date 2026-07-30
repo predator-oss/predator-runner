@@ -110,6 +110,27 @@ function Plugin(script, events) {
         if (lagMonitor) {
             Object.assign(report.summaries = report.summaries || {}, lagMonitor.drain());
         }
+        // Kafka produces have no HTTP request/response, so the fields predator's
+        // charts draw (requestsCompleted, rps, latency) stay at 0 for kafka-only
+        // windows. Fold the engine's counters into them: a sent message is a
+        // completed request, publish latency is its latency.
+        const kafkaSent = (report.counters && report.counters['kafka.messages_sent']) || 0;
+        if (kafkaSent > 0) {
+            report.requestsCompleted = (report.requestsCompleted || 0) + kafkaSent;
+            report.rps = report.rps || { count: 0, mean: 0 };
+            report.rps.count = (report.rps.count || 0) + kafkaSent;
+            const publish = report.summaries && report.summaries['kafka.publish_latency'];
+            const noHttpLatency = !report.latency || !report.latency.median;
+            if (publish && noHttpLatency) {
+                report.latency = {
+                    min: publish.min,
+                    max: publish.max,
+                    median: publish.median,
+                    p95: publish.p95,
+                    p99: publish.p99
+                };
+            }
+        }
         // v2's legacy shim leaves rps.mean at 0; derive it from the window.
         const now = Date.now();
         const windowSeconds = Math.max(1, (now - lastStatsAt) / 1000);
