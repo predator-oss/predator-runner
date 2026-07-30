@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.11.1](https://github.com/predator-oss/predator-runner/compare/v1.11.0...v1.11.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* only refuse to run on a major version mismatch ([#9](https://github.com/predator-oss/predator-runner/issues/9)) ([b52a6fc](https://github.com/predator-oss/predator-runner/commit/b52a6fc8075d2b4bd1b68b0990f1e8370337e25d))
+
 ## [1.11.0](https://github.com/predator-oss/predator-runner/compare/v1.10.0...v1.11.0) (2026-07-30)
 
 
