@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.11.0](https://github.com/predator-oss/predator-runner/compare/v1.10.0...v1.11.0) (2026-07-30)
+
+
+### Features
+
+* **kafka:** per-topic messages_sent counter ([#8](https://github.com/predator-oss/predator-runner/issues/8)) ([61ea7a5](https://github.com/predator-oss/predator-runner/commit/61ea7a50a6123811ff1fd183379e4e10b7b92f48))
+
 ## [1.10.0](https://github.com/predator-oss/predator-runner/compare/v1.9.0...v1.10.0) (2026-07-30)
 
 
