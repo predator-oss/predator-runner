@@ -24,7 +24,8 @@
  *       count: 10
  *
  * Emits:
- *   kafka.messages_sent (counter), kafka.errors (counter),
+ *   kafka.messages_sent (counter), kafka.messages_sent.<topic> (counter),
+ *   kafka.errors (counter),
  *   kafka.publish_latency (histogram, ms).
  * Consumer-lag monitoring lives in artillery-plugin-predator (leader-side).
  */
@@ -146,6 +147,9 @@ KafkaEngine.prototype.step = function (step, ee) {
                 .then(() => {
                     const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
                     ee.emit('counter', 'kafka.messages_sent', 1);
+                    // Per-topic tally so a report can show which topics took the
+                    // load, not just the total across all of them.
+                    ee.emit('counter', `kafka.messages_sent.${topic}`, 1);
                     ee.emit('histogram', 'kafka.publish_latency', elapsedMs);
                     callback(null, context);
                 })
