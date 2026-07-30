@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.10.0](https://github.com/predator-oss/predator-runner/compare/v1.9.0...v1.10.0) (2026-07-30)
+
+
+### Features
+
+* **kafka:** producer pool, acks passthrough, loop steps, and chart-visible send metrics ([#7](https://github.com/predator-oss/predator-runner/issues/7)) ([3f005ca](https://github.com/predator-oss/predator-runner/commit/3f005caf3eb1d3fa172fc649d49a1481e6182fb4))
+
 ## [1.9.0](https://github.com/predator-oss/predator-runner/compare/v1.8.4...v1.9.0) (2026-07-30)
 
 
